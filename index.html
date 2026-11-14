@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Growth Hub</title>
+  <meta name="description" content="Personal development tracker for learning Mandarin, losing weight and studying AI governance & architecture.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav aria-label="Main">
+      <div class="brand"><span class="logo">↗</span> Growth Hub</div>
+      <a href="#dashboard"><span class="ni">◎</span><span>Today</span></a>
+      <a href="#mandarin"><span class="ni">学</span><span>Mandarin</span></a>
+      <a href="#weight"><span class="ni">⚖</span><span>Weight</span></a>
+      <a href="#ai"><span class="ni">AI</span><span>AI Learning</span></a>
+      <a href="#prefs"><span class="ni">⚙</span><span>Settings</span></a>
+      <p id="sync" class="sync" data-state="local">Saved on this device</p>
+    </nav>
+    <main id="main"></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
