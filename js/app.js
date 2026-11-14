@@ -52,8 +52,79 @@
     }
   }
   let state = load();
-  function save() {
+
+  // Optional cloud sync: when hosted as a claude.ai artifact, the state is also
+  // stored in the signed-in person's private db document so it follows them
+  // across devices. Elsewhere (file://, GitHub Pages) it stays in localStorage.
+  const sync = { ref: null, status: "local", timer: null, writing: false, pending: false };
+  function saveLocal() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ }
+  }
+  function save() {
+    state.updatedAt = Date.now();
+    saveLocal();
+    if (sync.ref) {
+      clearTimeout(sync.timer);
+      sync.timer = setTimeout(pushRemote, 800);
+    }
+  }
+  async function pushRemote() {
+    if (!sync.ref) return;
+    if (sync.writing) { sync.pending = true; return; }
+    sync.writing = true;
+    setSyncStatus("saving");
+    try {
+      await sync.ref.set(JSON.parse(JSON.stringify(state)));
+      setSyncStatus("synced");
+    } catch (e) {
+      setSyncStatus("error");
+    } finally {
+      sync.writing = false;
+      if (sync.pending) { sync.pending = false; pushRemote(); }
+    }
+  }
+  function setSyncStatus(s) {
+    sync.status = s;
+    const el = document.getElementById("sync");
+    if (!el) return;
+    const label = { local: "Saved on this device", saving: "Syncing…", synced: "Synced to your account", error: "Sync failed — saved on this device" }[s];
+    el.textContent = label;
+    el.dataset.state = s;
+  }
+  function adoptRemote(data) {
+    const base = defaultState();
+    state = { ...base, ...data, profile: { ...base.profile, ...data.profile }, goals: { ...base.goals, ...data.goals } };
+    saveLocal();
+    session.queue = null;
+    // Don't yank the page out from under someone typing notes
+    const a = document.activeElement;
+    if (a && /INPUT|TEXTAREA/.test(a.tagName)) return;
+    render();
+  }
+  async function initSync() {
+    if (!window.claude || typeof window.claude.use !== "function") return;
+    try {
+      const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+      const uid = db && user ? await user.id() : null;
+      if (!uid) return;
+      const ref = db.collection("data/users/" + uid).doc("state");
+      const snap = await ref.get();
+      sync.ref = ref;
+      const remote = snap.exists ? snap.data() : null;
+      if (remote && (remote.updatedAt || 0) >= (state.updatedAt || 0)) {
+        adoptRemote(remote);
+        setSyncStatus("synced");
+      } else {
+        await pushRemote(); // first device, or this device has newer data
+      }
+      ref.onSnapshot((s) => {
+        if (!s.exists || s.metadata.hasPendingWrites) return;
+        const d = s.data();
+        if ((d.updatedAt || 0) > (state.updatedAt || 0)) { adoptRemote(d); setSyncStatus("synced"); }
+      }, () => setSyncStatus("error"));
+    } catch (e) {
+      setSyncStatus("error");
+    }
   }
 
   const HABITS = [
@@ -458,7 +529,7 @@
       ${quiz.answered != null ? `<p class="explain">${quiz.answered === correct ? "✅ Correct. " : "❌ Not quite. "}${esc(why)}</p><button class="btn primary" data-action="quiz-next">${quiz.idx + 1 < AI_QUIZ.length ? "Next" : "See result"}</button>` : ""}`;
   }
 
-  views.settings = () => `
+  views.prefs = () => `
     <header class="page-head"><h1>Settings</h1></header>
     <section class="card">
       <h2>Profile & daily targets</h2>
@@ -472,7 +543,7 @@
     </section>
     <section class="card">
       <h2>Your data</h2>
-      <p class="muted">Everything is stored only in this browser. Export a backup regularly, or to move to another device.</p>
+      <p class="muted">${sync.ref ? "Your data syncs to your claude.ai account, so it's the same on every device you sign in from." : "Your data is stored in this browser only. Export a backup regularly, or to move to another device."}</p>
       <div class="row wrap">
         <button class="btn" data-action="export">Export backup</button>
         <label class="btn">Import backup<input type="file" accept="application/json" data-action="import" hidden></label>
@@ -518,6 +589,32 @@
     render();
   }
 
+  // Two-tap confirmation (browser confirm() dialogs are blocked in some hosts)
+  function confirmTap(el, label) {
+    if (el.dataset.armed) return true;
+    el.dataset.armed = "1";
+    const old = el.innerHTML;
+    el.innerHTML = label;
+    el.classList.add("armed");
+    setTimeout(() => { if (el.isConnected) { delete el.dataset.armed; el.innerHTML = old; el.classList.remove("armed"); } }, 3000);
+    return false;
+  }
+
+  async function exportBackup() {
+    const json = JSON.stringify(state, null, 2);
+    const filename = `growth-hub-backup-${today()}.json`;
+    const dl = window.claude && typeof window.claude.use === "function" ? await window.claude.use("downloads") : null;
+    if (dl) {
+      try { await dl.save({ filename, data: json }); toast("Backup saved"); } catch (e) { toast("Backup not saved"); }
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
   main.addEventListener("click", (e) => {
     const el = e.target.closest("[data-action]");
     if (!el) return;
@@ -526,7 +623,7 @@
     else if (a === "reveal") { session.revealed = true; render(); }
     else if (a === "grade") doGrade(el.dataset.grade);
     else if (a === "del-weight") {
-      if (confirm("Delete this weigh-in?")) { state.weights = state.weights.filter((w) => w.date !== el.dataset.date); save(); render(); }
+      if (confirmTap(el, "Delete?")) { state.weights = state.weights.filter((w) => w.date !== el.dataset.date); save(); render(); }
     } else if (a === "quiz-answer") {
       quiz.answered = Number(el.dataset.i);
       if (quiz.answered === AI_QUIZ[quiz.order[quiz.idx]][2]) quiz.score++;
@@ -540,15 +637,9 @@
       }
       render();
     } else if (a === "quiz-restart") { resetQuiz(); render(); }
-    else if (a === "export") {
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `personal-growth-backup-${today()}.json`;
-      link.click();
-      URL.revokeObjectURL(link.href);
-    } else if (a === "reset") {
-      if (confirm("Delete ALL your data? This cannot be undone.")) { state = defaultState(); save(); session.queue = null; render(); toast("Data reset"); }
+    else if (a === "export") exportBackup();
+    else if (a === "reset") {
+      if (confirmTap(el, "Tap again to delete everything")) { state = defaultState(); save(); session.queue = null; render(); toast("Data reset"); }
     }
   });
 
@@ -631,4 +722,6 @@
   });
 
   render();
+  setSyncStatus("local");
+  initSync();
 })();

@@ -19,7 +19,7 @@ It works on desktop and phone (bottom tab bar on small screens). To use it on yo
 
 ## Your data
 
-Everything is stored in your browser's `localStorage` — nothing is sent anywhere. Use **Settings → Export backup** regularly, and **Import backup** to move to another device or browser.
+When run from GitHub or a local file, data is stored in your browser's `localStorage`. When hosted as a claude.ai artifact, it also syncs to your account's private storage, so it is the same on every device you sign in from. Use **Settings → Export backup** regularly, and **Import backup** to move to another device or browser.
 
 ## Tips
 
